@@ -1,0 +1,742 @@
+---
+title: "Seasonality_Final"
+author: "Casey McGrath"
+date: "August 29, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#Set working directory as root directory for markdown
+#this is helpful in setting where you want your outputs (like graphs) to be saved
+#there are some issues but the below has worked well for me
+#set directory location
+mainDir <- "C:\\Users\\14014\\Desktop\\UH_Soil_Warming\\Data_Anaylsis\\data_wrangling"
+#tell knitr what that location is
+knitr::opts_knit$set(root.dir=mainDir)
+
+#set knitr chunk options
+#this is useful for global things like how images are output - images size, where saved, etc.
+knitr::opts_chunk$set(#where figures are saved: in the main directory, within "Figures" folder
+                      #folder will be created for you
+                      fig.path=paste0(mainDir,"/Figures/"),
+                      #size and alignment of images
+                      #fig.height = 8, fig.width=11, fig.align='center',
+                      #type of output for images: below does both pdf and png image
+                      dev=c('pdf','png'),
+                      #allow R code to show up in final doc but delete message and warnings
+                      echo=TRUE, message=FALSE, warning=FALSE,
+                      #attempts to clean up code and keep within margins (doesnt always work on long strings)
+                      tidy.opts=list(width.cutoff=60), tidy=TRUE, dpi=400)
+```
+
+```{r datasets, echo =FALSE}
+####################################LOAD DATA AND MANIPULATE DATAFRAMES ################################
+library("dplyr")
+library("tidyr")
+#library("STRbook")
+
+#set wroking location where files are stored
+setwd("C:\\Users\\14014\\Desktop\\UH_Soil_Warming\\Data_Anaylsis\\data_wrangling")
+
+#location IDS
+locs <- read.csv(file="locations.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(locs) <- c("id", "lat", "lon", "depth")
+
+#time file of just dates
+times <- read.csv(file="times.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(times) <-  c("julian", "year", "month", "day")
+
+#data for one variable at all locations and times
+temp <- read.csv(file="temp.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+co2 <- read.csv(file="co2_redo.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+vwc <- read.csv(file="vwc.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+precip <- read.csv(file="precip.csv", skip=1, header=FALSE, stringsAsFactors = F)
+
+
+####create long dataframe#####
+#Temp dataset
+#set names for the variable at each location
+names(temp) <- locs$id
+
+#attach one variable to the timestamp (can do this for all other variables)
+temp <- cbind(times, temp)
+#check the first 10 columns
+#head(names(temp), 10)
+
+#create Tmax in long format where z is Tmax using gather
+temp_long <- gather(temp, id, z, -julian, -year, -month, -day)
+#look at first rows 
+#head(temp_long)
+
+#characterize ID as integer for later
+temp_long$id <- as.integer(temp_long$id)
+
+#write which proc each variable is starting with Tmax to add multiple variables under z under different proc
+temp_long <- mutate(temp_long, proc = "temp")
+#head(temp_long)
+
+#repeat this process for each variable
+#CO2 dataset
+names(co2) <- locs$id
+
+#attach one variable to the timestamp (can do this for all other variables)
+co2 <- cbind(times, co2)
+#check the first 10 columns
+#head(names(co2), 10)
+
+#create Tmax in long format where z is Tmax using gather
+co2_long <- gather(co2, id, z, -julian, -year, -month, -day)
+#look at first rows 
+#head(co2_long)
+
+#characterize ID as integer for later
+co2_long$id <- as.integer(co2_long$id)
+
+co2_long <- mutate(co2_long, proc = "CO2")
+#head(co2_long)
+
+#VWC dataset
+names(vwc) <- locs$id
+
+#attach one variable to the timestamp (can do this for all other variables)
+vwc <- cbind(times, vwc)
+#check the first 10 columns
+#head(names(vwc), 10)
+
+#create Tmax in long format where z is Tmax using gather
+vwc_long <- gather(vwc, id, z, -julian, -year, -month, -day)
+#look at first rows 
+#head(vwc_long)
+
+#characterize ID as integer for later
+vwc_long$id <- as.integer(vwc_long$id)
+
+vwc_long <- mutate(vwc_long, proc = "VWC")
+#head(vwc_long)
+
+#precip dataset
+#names(precip) <- locs$id
+
+#attach one variable to the timestamp (can do this for all other variables)
+#precip <- cbind(times, precip)
+#check the first 10 columns
+#head(names(precip), 10)
+
+#create Tmax in long format where z is Tmax using gather
+#precip_long <- gather(precip, id, z, -julian, -year, -month, -day)
+#look at first rows 
+#head(precip_long)
+
+#characterize ID as integer for later
+#precip_long$id <- as.integer(precip_long$id)
+
+#precip_long <- mutate(precip_long, proc = "precip")
+#head(precip_long)
+
+#construct final data frame
+Lyon_df <- rbind(temp_long, co2_long, vwc_long) #, precip_long)
+
+#create group summary for the data by year and proc
+summ <- group_by(Lyon_df, month, proc) %>% # groupings
+summarise(mean_proc = mean(z)) # operation
+
+#add spatial data to dataframe
+Lyon_df <- left_join(Lyon_df, locs, by = "id")
+
+#libraries for spatio-temporal data classes 
+library("sp")
+library("spacetime")
+
+#combine year month day
+Lyon_df$date <- with(Lyon_df,
+paste(year, month, day, sep = "-"))
+#head(Lyon_df$date, 4) # show first four elements
+## [1] "1990-1-1" "1990-1-2" "1990-1-3" "1990-1-4"
+
+#create date object 
+Lyon_df$date <- as.Date(Lyon_df$date)
+#class(Lyon_df$date)
+
+#dataframe with #26 in instaed of outlier
+Lyon_dfco <- subset(Lyon_df, Lyon_df$proc == "CO2")
+Lyon_dftemp <- subset(Lyon_df, Lyon_df$proc == "temp")
+Lyon_dfvwc  <- subset(Lyon_df, Lyon_df$proc == "VWC")
+#Lyon_dfprecip  <- subset(Lyon_df, Lyon_df$proc == "precip")
+
+Lyon_final <-Lyon_dftemp
+
+Lyon_final$temp <-Lyon_dftemp$z
+Lyon_final$co2 <- Lyon_dfco$z
+Lyon_final$vwc <- Lyon_dfvwc$z
+#Lyon_final$precip <- Lyon_dfprecip$z
+
+#get rid of unnesscery columns 
+Lyon_final <- subset(Lyon_final, select = -c(z, proc, julian, day, month, year))
+
+#soil charactertistics dataset for PCA
+soil_char_PCA <- read.csv(file="soil_characteristics_PCAA.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(soil_char_PCA) <-  c("depth","C",	"N",	"pH_H2O",	"Delta_pH",	"non_crystal",	"Fe_h_Fe_d","Al_p","Fe_p","Al_p_Al_h",	"H_16S",	"S_16S",	"H_ITS",	"S_ITS")
+
+
+#create time_df26 o be used as main dataset below
+df <- aggregate(Lyon_final[,6:8], list(Lyon_final$id), mean)
+df$id <- df$Group.1
+soil_char_PCA$id <- c(1:50)
+
+time_df <- left_join(soil_char_PCA, df, by = "id")
+time_df26 <- subset(time_df, time_df$id != 26)
+
+#######soil charactertistics dataset with NAs ######
+soil_char <- read.csv(file="soil_characteristics_NA.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(soil_char) <-  c("depth","C",	"N",	"pH_H2O",	"Delta_pH",	"non_crystal",	"Fe_oxides",	"OM_complexed",	"H_16S",	"S_16S",	"H_ITS",	"S_ITS")
+
+#create time_df26 o be used as main dataset below
+df <- aggregate(Lyon_final[,6:8], list(Lyon_final$id), mean)
+df$id <- df$Group.1
+soil_char$id <- c(1:50)
+
+time_df <- left_join(soil_char, df, by = "id")
+time_df26 <- subset(time_df, time_df$id != 26)
+```
+
+```{r max_min}
+####################IDENTIFY THE TOP 20% AND LOWEST 20% FOR THE MEAN TEMP AT EACH DEPTH##############################
+library(dplyr)
+#subset mean dataset for depth =20cm 
+mean_20 <- subset(time_df, time_df$depth ==20)
+
+#top two high temperature values 
+max_20 <- mean_20 %>%  top_n(2, temp)
+#top two low temperature values 
+min_20 <-mean_20 %>%  top_n(-2, temp)
+
+#subset mean dataset for depth =40cm 
+mean_40 <- subset(time_df, time_df$depth ==40)
+
+#top two high temperature values 
+max_40 <- mean_40 %>%  top_n(2, temp)
+#top two low temperature values 
+min_40 <- mean_40 %>%  top_n(-2, temp)
+
+#subset mean dataset for depth =60cm 
+mean_60 <- subset(time_df, time_df$depth ==60)
+
+#top two high temperature values 
+max_60 <- mean_60 %>%  top_n(2, temp)
+#top two low temperature values 
+min_60 <- mean_60 %>%  top_n(-2, temp)
+
+#subset mean dataset for depth =80cm 
+mean_80 <- subset(time_df, time_df$depth ==80)
+
+#top two high temperature values 
+max_80 <-mean_80 %>%  top_n(2, temp)
+#top two low temperature values 
+min_80 <- mean_80 %>%  top_n(-2, temp)
+
+#subset mean dataset for depth =20cm 
+mean_100 <- subset(time_df, time_df$depth ==100)
+
+#top two high temperature values 
+max_100 <- mean_100 %>%  top_n(2, temp)
+#top two low temperature values 
+min_100 <- mean_100 %>%  top_n(-2, temp)
+
+
+#bind top and low 20% for all depths into dataframe
+max_min_df <- bind_rows(max_20, min_20,max_40, min_40,max_60, min_60, max_80, min_80, max_100, min_100)
+#max_min_df <- max_min_df[c(1,5:8)]
+print(max_min_df$id)
+```
+
+```{r}
+Lyon_final$co2 <- Lyon_final$co2 / 1000000 *44.01
+```
+
+
+```{r}
+####################################TIMESERIES OF TEMPERAUTRE ACROSS TIME##########################
+#create timeseries with IDS combined 
+library(ggplot2)
+ggplot(Lyon_final, aes(date, temp, group = id, color = factor(depth))) +
+    geom_line() +
+    labs(
+      y = "Temperature (?C)",
+      x = "Date", 
+      color = "Depth (cm)")
+#create timeseries for each ID + facet_wrap(~ id)
+```
+
+```{r}
+####################################TIMESERIES OF VWC ACROSS TIME##########################
+#create timeseries with IDS combined 
+library(ggplot2)
+ggplot(Lyon_final, aes(date, vwc, group = id, color = factor(depth))) +
+    geom_line() +
+    labs(
+      y = "VWC",
+      x = "Date",
+      color = "Depth (cm)")
+#create timeseries for each ID + facet_wrap(~ id)
+```
+
+```{r}
+####################################TIMESERIES OF CO2 ACROSS TIME##########################
+#create timeseries with IDS combined 
+library(ggplot2)
+ggplot(Lyon_final, aes(date, co2, group = id, color = factor(depth))) +
+    geom_line() + facet_wrap(~ depth) +
+    labs(
+      y = expression('CO'[2 ]~ 'produced ('~ g ~ m^-3 ~ hr^-1~')'),
+      x = "Date",      
+      color = "Depth (cm)")
+#create timeseries for each ID 
+```
+
+```{r}
+#######################AUGMENTED DICKEY FULLER TEST FOR UNIT ROOT (STATIONARITY) TEMP ########################
+#create timeseries for each ID
+library(lubridate)
+library(magicfor)               
+magic_for(print, silent = TRUE)
+
+#set n = 50 to iterate seasonal adjustment for each ID
+n <- unique(Lyon_final$id)
+for (i in n){
+
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final, Lyon_final$id == i)
+  
+  #subset for date, temp, 
+  Lyon_final_id <- Lyon_final_id[c(5,6)]
+
+  #create timeseries using ts 
+  Lyon_finalTS <-  ts(Lyon_final_id, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  
+  library(aTSA)
+  adf <- adf.test(Lyon_finalTS[,2])
+  
+  #plot acf and pacf
+  acf(Lyon_finalTS[,2])
+  pacf(Lyon_finalTS[,2])
+  
+print(adf)
+}
+
+adf_temp <- magic_result_as_dataframe() 
+  
+```
+
+```{r}
+#######################AUGMENTED DICKEY FULLER TEST FOR UNIT ROOT (STATIONARITY) VWC ########################
+#create timeseries for each ID
+library(lubridate)
+library(magicfor)               
+magic_for(print, silent = TRUE)
+
+#set n = 50 to iterate seasonal adjustment for each ID
+n <- unique(Lyon_final$id)
+for (i in n){
+
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final, Lyon_final$id == i)
+  
+  #subset for date, temp, 
+  Lyon_final_id <- Lyon_final_id[c(5,8)]
+
+  #create timeseries using ts 
+  Lyon_finalTS <-  ts(Lyon_final_id, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  
+  library(aTSA)
+  adf <- adf.test(Lyon_finalTS[,2])
+  
+  #plot acf and pacf
+  acf(Lyon_finalTS[,2])
+  pacf(Lyon_finalTS[,2])
+  
+print(adf)
+}
+
+adf_vwc <- magic_result_as_dataframe() 
+  
+```
+
+```{r}
+#######################AUGMENTED DICKEY FULLER TEST FOR UNIT ROOT (STATIONARITY) CO2 ########################
+#create timeseries for each ID
+library(lubridate)
+library(magicfor)               
+magic_for(print, silent = TRUE)
+
+#set n = 50 to iterate seasonal adjustment for each ID
+n <- unique(Lyon_final$id)
+for (i in n){
+
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final, Lyon_final$id == i)
+  
+  #subset for date, temp, 
+  Lyon_final_id <- Lyon_final_id[c(5,7)]
+
+  #create timeseries using ts 
+  Lyon_finalTS <-  ts(Lyon_final_id, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  
+  library(aTSA)
+  adf <- adf.test(Lyon_finalTS[,2])
+  
+  #plot acf and pacf
+  acf(Lyon_finalTS[,2])
+  pacf(Lyon_finalTS[,2])
+  
+print(adf)
+}
+
+adf_co2 <- magic_result_as_dataframe() 
+  
+```
+
+
+
+```{r}
+################################SEASONALLY ADJUST THE TEMP DATA USING FOURIERS TRANSFORMATION#####################
+
+#Seasonal decomposition of short time series information
+#https://robjhyndman.com/hyndsight/tslm-decomposition/
+
+#load the magic for library to save loop iterations into a dataframe
+library(magicfor)               
+magic_for(print, silent = TRUE)
+
+#set n = 50 to iterate seasonal adjustment for each ID
+n <- unique(Lyon_final$id)
+for (i in n){
+
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final, Lyon_final$id == i)
+  
+  #subset for date, temp, 
+  Lyon_final_id <- Lyon_final_id[c(5,6)]
+  
+  library(lubridate)
+  #create timeseries using ts 
+  df <-  ts(Lyon_final_id$temp, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  library(forecast)
+  
+#predict the trend of the data using fourier transformation 
+  library(ggplot2)
+  decompose_df <- tslm(df ~ trend + fourier(df, 1))
+  
+#decompose data, trend, seasonality and remainder (noise) 
+  trend <- coef(decompose_df)[1] + coef(decompose_df)['trend']*seq_along(df)
+  components <- cbind(
+    data = df,
+    trend = trend,
+    season = df - trend - residuals(decompose_df),
+    remainder = residuals(decompose_df)
+  )
+  
+#plot the components  
+  autoplot(components, facet=TRUE)
+
+  adjust_df <- df - components[,'season']
+  autoplot(df, series="Data",  ylab = "Temperature (?C)",
+      xlab = "Date") +
+  autolayer(adjust_df, series="Seasonally adjusted")
+  
+#get the seasonality adjusted transformation data
+  ad_temp <- adjust_df
+  ad_temp <- as.data.frame(ad_temp)
+  ad_temp$date <- Lyon_final_id$date
+  ad_temp$id <- i
+  print(ad_temp$x, ad_temp$id, ad_temp$date)
+}
+#save results into dataframe and reorganize column names and selected columns 
+temp_adjusted <- magic_result_as_dataframe() 
+temp_adjusted$temp_ad <- temp_adjusted$`ad_temp$x`
+temp_adjusted$id <- temp_adjusted$`ad_temp$id`
+temp_adjusted$date <- as.Date(temp_adjusted$`ad_temp$date`,origin = lubridate::origin)
+temp_adjusted <- temp_adjusted[5:7]
+```
+
+```{r}
+################################SEASONALLY ADJUST THE TEMP DATA USING FOURIERS TRANSFORMATION#####################
+
+#Seasonal decomposition of short time series information
+#https://robjhyndman.com/hyndsight/tslm-decomposition/
+
+#load the magic for library to save loop iterations into a dataframe
+library(magicfor)               
+magic_for(print, silent = TRUE)
+
+#set n = 50 to iterate seasonal adjustment for each ID
+n <- unique(Lyon_final$depth)
+for (i in n){
+
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final, Lyon_final$depth == 100)
+  
+  #subset for date, temp, 
+  Lyon_final_id <- Lyon_final_id[c(5,6)]
+  depth_season <-  aggregate(Lyon_final_id$temp,list(Lyon_final_id$date),mean )
+  
+  library(lubridate)
+  #create timeseries using ts 
+  df <-  ts(depth_season$x, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  library(forecast)
+  
+#predict the trend of the data using fourier transformation 
+  library(ggplot2)
+  decompose_df <- tslm(df ~ trend + fourier(df, 1))
+  
+#decompose data, trend, seasonality and remainder (noise) 
+  trend <- coef(decompose_df)[1] + coef(decompose_df)['trend']*seq_along(df)
+  components <- cbind(
+    data = df,
+    trend = trend,
+    season = df - trend - residuals(decompose_df),
+    remainder = residuals(decompose_df)
+  )
+  
+#plot the components  
+  autoplot(components, facet=TRUE)
+
+  adjust_df <- df - components[,'season']
+  plot_100 <- autoplot(df, series="Data",  ylab = "Temperature (??C)",
+      xlab = "Date") +
+  autolayer(adjust_df, series="Seasonally adjusted") +
+  theme(text = element_text(size=15)) +
+  scale_y_continuous(limits=c(18,27))
+#get the seasonality adjusted transformation data
+  ad_temp <- adjust_df
+  ad_temp <- as.data.frame(ad_temp)
+  ad_temp$date <- Lyon_final_id$date
+  ad_temp$id <- i
+  print(ad_temp$x, ad_temp$id, ad_temp$date)
+}
+# #save results into dataframe and reorganize column names and selected columns 
+# temp_adjusted <- magic_result_as_dataframe() 
+# temp_adjusted$temp_ad <- temp_adjusted$`ad_temp$x`
+# temp_adjusted$id <- temp_adjusted$`ad_temp$id`
+# temp_adjusted$date <- as.Date(temp_adjusted$`ad_temp$date`,origin = lubridate::origin)
+# temp_adjusted <- temp_adjusted[5:7]
+
+```
+
+
+```{r}
+################################SEASONALLY ADJUST THE VWC DATA USING FOURIERS TRANSFORMATION#####################
+
+#Seasonal decomposition of short time series information
+#https://robjhyndman.com/hyndsight/tslm-decomposition/
+
+#load the magic for library to save loop iterations into a dataframe
+library(magicfor)               
+magic_for(print, silent = TRUE)
+
+#set n = 50 to iterate seasonal adjustment for each ID
+n <- unique(Lyon_final$id)
+for (i in n){
+
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final, Lyon_final$id == i)
+  
+  #subset for date, vwc
+  Lyon_final_id <- Lyon_final_id[c(5,8)]
+  
+  library(lubridate)
+  #create timeseries using ts 
+  df <-  ts(Lyon_final_id$vwc, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  library(forecast)
+  
+#predict the trend of the data using fourier transformation 
+  library(ggplot2)
+  decompose_df <- tslm(df ~ trend + fourier(df, 1))
+
+#decompose data, trend, seasonality and remainder (noise) 
+  trend <- coef(decompose_df)[1] + coef(decompose_df)['trend']*seq_along(df)
+  components <- cbind(
+    data = df,
+    trend = trend,
+    season = df - trend - residuals(decompose_df),
+    remainder = residuals(decompose_df)
+  )
+  
+#plot the components
+  autoplot(components, facet=TRUE)
+
+#get the seasonality adjusted transformation data
+  adjust_df <- df - components[,'season']
+  autoplot(df, series="Data", ylab = "VWC", xlab="Date") +
+  autolayer(adjust_df, series="Seasonally adjusted")
+  ad_vwc <- adjust_df
+  ad_vwc <- as.data.frame(ad_vwc)
+  ad_vwc$date <- Lyon_final_id$date
+  ad_vwc$id <- i
+  print(ad_vwc$x, ad_vwc$id, ad_vwc$date)
+}
+#save results into dataframe and reorganize column names and selected columns 
+vwc_adjusted <- magic_result_as_dataframe() 
+vwc_adjusted$vwc_ad <- vwc_adjusted$`ad_vwc$x`
+vwc_adjusted$id <- vwc_adjusted$`ad_vwc$id`
+vwc_adjusted$date <- as.Date(vwc_adjusted$`ad_vwc$date`,origin = lubridate::origin)
+vwc_adjusted <- vwc_adjusted[5:7]
+
+```
+
+```{r}
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final, Lyon_final$depth == 100)
+  
+  #subset for date, vwc
+  Lyon_final_id <- Lyon_final_id[c(5,8)]
+  depth_season <-  aggregate(Lyon_final_id$vwc,list(Lyon_final_id$date),mean )
+  
+  library(lubridate)
+  #create timeseries using ts 
+  df <-  ts(depth_season$x, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  library(forecast)
+  
+#predict the trend of the data using fourier transformation 
+  library(ggplot2)
+  decompose_df <- tslm(df ~ trend + fourier(df, 1))
+
+#decompose data, trend, seasonality and remainder (noise) 
+  trend <- coef(decompose_df)[1] + coef(decompose_df)['trend']*seq_along(df)
+  components <- cbind(
+    data = df,
+    trend = trend,
+    season = df - trend - residuals(decompose_df),
+    remainder = residuals(decompose_df)
+  )
+  
+#plot the components
+  autoplot(components, facet=TRUE)
+
+#get the seasonality adjusted transformation data
+  adjust_df <- df - components[,'season']
+ plot_100_vwc <-  autoplot(df, series="Data", ylab = "VWC", xlab="Date") +
+  autolayer(adjust_df, series="Seasonally adjusted") +
+   theme(text = element_text(size=15)) +
+  scale_y_continuous(limits=c(0.35, 0.46))
+```
+
+
+```{r}
+################################SEASONALLY ADJUST THE 20cm CO2 DATA USING FOURIERS TRANSFORMATION#####################
+
+#Seasonal decomposition of short time series information
+#https://robjhyndman.com/hyndsight/tslm-decomposition/
+
+#load the magic for library to save loop iterations into a dataframe
+library(magicfor)               
+magic_for(print, silent = TRUE)
+
+#run co2 adjusted only for top 20cm effected by seasonality component 
+Lyon_final_20 <- subset(Lyon_final, Lyon_final$depth == 20)
+
+#set n = 50 to iterate seasonal adjustment for each ID
+n <- unique(Lyon_final_20$id)
+for (i in n){
+
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final_20, Lyon_final_20$id == i)
+  
+  #subset for date, temp, co2 and vwc
+  Lyon_final_id <- Lyon_final_id[c(5,7)]
+  
+  library(lubridate)
+  #create timeseries using ts 
+  df <-  ts(Lyon_final_id$co2, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  library(forecast)
+  
+#predict the trend of the data using fourier transformation
+  library(ggplot2)
+  decompose_df <- tslm(df ~ trend + fourier(df, 2))
+
+#decompose data, trend, seasonality and remainder (noise)
+  trend <- coef(decompose_df)[1] + coef(decompose_df)['trend']*seq_along(df)
+  components <- cbind(
+    data = df,
+    trend = trend,
+    season = df - trend - residuals(decompose_df),
+    remainder = residuals(decompose_df)
+  )
+  
+#plot the components
+  autoplot(components, facet=TRUE)
+
+#get the seasonality adjusted transformation data
+  adjust_df <- df - components[,'season']
+  autoplot(df, series="Data", ylab = "CO2 produced", xlab = "Date") +
+  autolayer(adjust_df, series="Seasonally adjusted")
+  ad_co2 <- adjust_df
+  ad_co2 <- as.data.frame(ad_co2)
+  ad_co2$date <- Lyon_final_id$date
+  ad_co2$id <- i
+  #Replace negative values with NA (cannot have negative CO2 produced)
+  ad_co2[ad_co2 < 0] <- NA
+  print(ad_co2$x, ad_co2$id, ad_co2$date)
+
+}
+#save results into dataframe and reorganize column names and selected columns 
+co2_adjusted <- magic_result_as_dataframe() 
+co2_adjusted$co2_ad <- co2_adjusted$`ad_co2$x`
+co2_adjusted$id <- co2_adjusted$`ad_co2$id`
+co2_adjusted$date <- as.Date(co2_adjusted$`ad_co2$date`,origin = lubridate::origin)
+co2_adjusted <- co2_adjusted[5:7]
+```
+
+```{r}
+  #create local dataframe to carry out function
+  Lyon_final_id <- subset(Lyon_final_20, Lyon_final_20$id == 26)
+  
+  #subset for date, temp, co2 and vwc
+  Lyon_final_id <- Lyon_final_id[c(5,7)]
+    depth_season <-  aggregate(Lyon_final_id$co2,list(Lyon_final_id$date),mean )
+  library(lubridate)
+  #create timeseries using ts 
+  df <-  ts(depth_season$x, start=decimal_date(ymd("2018-11-19")), freq=365.25/7)
+  library(forecast)
+  
+#predict the trend of the data using fourier transformation
+  library(ggplot2)
+  decompose_df <- tslm(df ~ trend + fourier(df, 2))
+
+#decompose data, trend, seasonality and remainder (noise)
+  trend <- coef(decompose_df)[1] + coef(decompose_df)['trend']*seq_along(df)
+  components <- cbind(
+    data = df,
+    trend = trend,
+    season = df - trend - residuals(decompose_df),
+    remainder = residuals(decompose_df)
+  )
+  
+#plot the components
+  autoplot(components, facet=TRUE)
+
+#get the seasonality adjusted transformation data
+  adjust_df <- df - components[,'season']
+plot_20_co2 <- autoplot(df, series="Data", ylab = "CO2 produced", xlab = "Date") +
+  autolayer(adjust_df, series="Seasonally adjusted")
+```
+
+
+```{r}
+#Add vwc_adjusted and temp_adjusted to the final dataframe
+Lyon_final_adj <- Reduce(function(x, y) merge(x, y, all=TRUE), list(vwc_adjusted,temp_adjusted))
+Lyon_final_adj <- Reduce(function(x, y) merge(x, y, all=TRUE), list(Lyon_final_adj,Lyon_final))
+```
+
+```{r}
+#add the co2_adjusted values for the top 20cm samples
+Lyon_final_adj$depth <- factor(Lyon_final_adj$depth)
+Lyon_final_adj$co2[Lyon_final_adj$id == 1]  <- co2_adjusted$co2_ad[co2_adjusted$id == 1]
+Lyon_final_adj$co2[Lyon_final_adj$id == 6]  <- co2_adjusted$co2_ad[co2_adjusted$id == 6]
+Lyon_final_adj$co2[Lyon_final_adj$id == 16]  <- co2_adjusted$co2_ad[co2_adjusted$id == 16]
+Lyon_final_adj$co2[Lyon_final_adj$id == 21]  <- co2_adjusted$co2_ad[co2_adjusted$id == 21]
+Lyon_final_adj$co2[Lyon_final_adj$id == 26]  <- co2_adjusted$co2_ad[co2_adjusted$id == 26]
+Lyon_final_adj$co2[Lyon_final_adj$id == 31]  <- co2_adjusted$co2_ad[co2_adjusted$id == 31]
+Lyon_final_adj$co2[Lyon_final_adj$id == 36]  <- co2_adjusted$co2_ad[co2_adjusted$id == 36]
+Lyon_final_adj$co2[Lyon_final_adj$id == 41]  <- co2_adjusted$co2_ad[co2_adjusted$id == 41]
+Lyon_final_adj$co2[Lyon_final_adj$id == 46]  <- co2_adjusted$co2_ad[co2_adjusted$id == 46]
+```
