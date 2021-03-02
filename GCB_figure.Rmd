@@ -1,0 +1,610 @@
+---
+title: "Untitled"
+author: "Casey McGrath"
+date: "January 29, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup, include=FALSE}
+######SEE SEASONAL_FINAL.RMD FOR DATA TO LOAD #####################################################################
+#Set working directory as root directory for markdown
+#this is helpful in setting where you want your outputs (like graphs) to be saved
+#there are some issues but the below has worked well for me
+#set directory location
+mainDir <- "C:\\Users\\NeilA\\Desktop\\UH_Soil_Warming\\Data_Anaylsis"
+#tell knitr what that location is
+knitr::opts_knit$set(root.dir=mainDir)
+
+#set knitr chunk options
+#this is useful for global things like how images are output - images size, where saved, etc.
+knitr::opts_chunk$set(#where figures are saved: in the main directory, within "Figures" folder
+                      #folder will be created for you
+                      fig.path=paste0(mainDir,"/Figures/"),
+                      #size and alignment of images
+                      #fig.height = 8, fig.width=11, fig.align='center',
+                      #type of output for images: below does both pdf and png image
+                      dev=c('pdf','png'),
+                      #allow R code to show up in final doc but delete message and warnings
+                      echo=TRUE, message=FALSE, warning=FALSE,
+                      #attempts to clean up code and keep within margins (doesnt always work on long strings)
+                      tidy.opts=list(width.cutoff=60), tidy=TRUE, dpi=400)
+```
+
+```{r datasets, echo =FALSE}
+####################################LOAD DATA AND MANIPULATE DATAFRAMES ################################
+library("dplyr")
+library("tidyr")
+#library("STRbook")
+
+#set working location where files are stored
+setwd("C:\\Users\\14014\\Desktop\\UH_Soil_Warming\\Data_Anaylsis\\data_wrangling")
+
+#location IDS
+locs <- read.csv(file="locations.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(locs) <- c("id", "lat", "lon", "depth")
+
+#time file of just dates
+times <- read.csv(file="times.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(times) <-  c("julian", "year", "month", "day")
+
+#data for one variable at all locations and times
+temp <- read.csv(file="temp.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+co2 <- read.csv(file="co2_redo.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+vwc <- read.csv(file="vwc.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+precip <- read.csv(file="precip.csv", skip=1, header=FALSE, stringsAsFactors = F)
+
+####create long dataframe#####
+#Temp dataset
+#set names for the variable at each location
+names(temp) <- locs$id
+
+#attach one variable to the timestamp (can do this for all other variables)
+temp <- cbind(times, temp)
+#check the first 10 columns
+#head(names(temp), 10)
+
+#create Tmax in long format where z is Tmax using gather
+temp_long <- gather(temp, id, z, -julian, -year, -month, -day)
+#look at first rows 
+#head(temp_long)
+
+#characterize ID as integer for later
+temp_long$id <- as.integer(temp_long$id)
+
+#write which proc each variable is starting with Tmax to add multiple variables under z under different proc
+temp_long <- mutate(temp_long, proc = "temp")
+#head(temp_long)
+
+#repeat this process for each variable
+#CO2 dataset
+names(co2) <- locs$id
+
+#attach one variable to the timestamp (can do this for all other variables)
+co2 <- cbind(times, co2)
+#check the first 10 columns
+#head(names(co2), 10)
+
+#create Tmax in long format where z is Tmax using gather
+co2_long <- gather(co2, id, z, -julian, -year, -month, -day)
+#look at first rows 
+#head(co2_long)
+
+#characterize ID as integer for later
+co2_long$id <- as.integer(co2_long$id)
+
+co2_long <- mutate(co2_long, proc = "CO2")
+#head(co2_long)
+
+#VWC dataset
+names(vwc) <- locs$id
+
+#attach one variable to the timestamp (can do this for all other variables)
+vwc <- cbind(times, vwc)
+#check the first 10 columns
+#head(names(vwc), 10)
+
+#create Tmax in long format where z is Tmax using gather
+vwc_long <- gather(vwc, id, z, -julian, -year, -month, -day)
+#look at first rows 
+#head(vwc_long)
+
+#characterize ID as integer for later
+vwc_long$id <- as.integer(vwc_long$id)
+
+vwc_long <- mutate(vwc_long, proc = "VWC")
+#head(vwc_long)
+
+#precip dataset
+#names(precip) <- locs$id
+
+#attach one variable to the timestamp (can do this for all other variables)
+#precip <- cbind(times, precip)
+#check the first 10 columns
+#head(names(precip), 10)
+
+#create Tmax in long format where z is Tmax using gather
+#precip_long <- gather(precip, id, z, -julian, -year, -month, -day)
+#look at first rows 
+#head(precip_long)
+
+#characterize ID as integer for later
+#precip_long$id <- as.integer(precip_long$id)
+
+#precip_long <- mutate(precip_long, proc = "precip")
+#head(precip_long)
+
+#construct final data frame
+Lyon_df <- rbind(temp_long, co2_long, vwc_long) #, precip_long)
+
+#create group summary for the data by year and proc
+summ <- group_by(Lyon_df, month, proc) %>% # groupings
+summarise(mean_proc = mean(z)) # operation
+
+#add spatial data to dataframe
+Lyon_df <- left_join(Lyon_df, locs, by = "id")
+
+#libraries for spatio-temporal data classes 
+library("sp")
+library("spacetime")
+
+#combine year month day
+Lyon_df$date <- with(Lyon_df,
+paste(year, month, day, sep = "-"))
+#head(Lyon_df$date, 4) # show first four elements
+## [1] "1990-1-1" "1990-1-2" "1990-1-3" "1990-1-4"
+
+#create date object 
+Lyon_df$date <- as.Date(Lyon_df$date)
+#class(Lyon_df$date)
+
+#dataframe with #26 in instaed of outlier
+Lyon_dfco <- subset(Lyon_df, Lyon_df$proc == "CO2")
+Lyon_dftemp <- subset(Lyon_df, Lyon_df$proc == "temp")
+Lyon_dfvwc  <- subset(Lyon_df, Lyon_df$proc == "VWC")
+#Lyon_dfprecip  <- subset(Lyon_df, Lyon_df$proc == "precip")
+
+Lyon_final <-Lyon_dftemp
+
+Lyon_final$temp <-Lyon_dftemp$z
+Lyon_final$co2 <- Lyon_dfco$z
+Lyon_final$vwc <- Lyon_dfvwc$z
+#Lyon_final$precip <- Lyon_dfprecip$z
+
+#get rid of unnesscery columns 
+Lyon_final <- subset(Lyon_final, select = -c(z, proc, julian, day, month, year))
+
+#soil charactertistics dataset for PCA
+soil_char_PCA <- read.csv(file="soil_characteristics_PCAA.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(soil_char_PCA) <-  c("depth","C",	"N",	"pH_H2O",	"Delta_pH",	"non_crystal",	"Fe_h_Fe_d","Al_p","Fe_p","Al_p_Al_h",	"H_16S",	"S_16S",	"H_ITS",	"S_ITS")
+
+
+#create time_df26 o be used as main dataset below
+df <- aggregate(Lyon_final[,6:8], list(Lyon_final$id), mean)
+df$id <- df$Group.1
+soil_char_PCA$id <- c(1:50)
+
+time_df <- left_join(soil_char_PCA, df, by = "id")
+time_df26 <- subset(time_df, time_df$id != 26)
+
+#######soil charactertistics dataset with NAs ######
+soil_char <- read.csv(file="soil_characteristics_NA.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(soil_char) <-  c("depth","C",	"N",	"pH_H2O",	"Delta_pH",	"non_crystal",	"Fe_oxides",	"OM_complexed",	"H_16S",	"S_16S",	"H_ITS",	"S_ITS")
+
+Lyon_final$co2 <- Lyon_final$co2 / 1000^2 *44.01
+
+#create time_df26 o be used as main dataset below
+df <- aggregate(Lyon_final[,6:8], list(Lyon_final$id), mean)
+df$id <- df$Group.1
+soil_char$id <- c(1:50)
+
+time_df <- left_join(soil_char, df, by = "id")
+time_df26 <- subset(time_df, time_df$id != 26)
+```
+
+```{r max_min}
+####################IDENTIFY THE TOP 20% AND LOWEST 20% FOR THE MEAN TEMP AT EACH DEPTH##############################
+library(dplyr)
+#subset mean dataset for depth =20cm 
+mean_20 <- subset(time_df, time_df$depth ==20)
+
+#top two high temperature values 
+max_20 <- mean_20 %>%  top_n(2, temp)
+#top two low temperature values 
+min_20 <-mean_20 %>%  top_n(-2, temp)
+
+#subset mean dataset for depth =40cm 
+mean_40 <- subset(time_df, time_df$depth ==40)
+
+#top two high temperature values 
+max_40 <- mean_40 %>%  top_n(2, temp)
+#top two low temperature values 
+min_40 <- mean_40 %>%  top_n(-2, temp)
+
+#subset mean dataset for depth =60cm 
+mean_60 <- subset(time_df, time_df$depth ==60)
+
+#top two high temperature values 
+max_60 <- mean_60 %>%  top_n(2, temp)
+#top two low temperature values 
+min_60 <- mean_60 %>%  top_n(-2, temp)
+
+#subset mean dataset for depth =80cm 
+mean_80 <- subset(time_df, time_df$depth ==80)
+
+#top two high temperature values 
+max_80 <-mean_80 %>%  top_n(2, temp)
+#top two low temperature values 
+min_80 <- mean_80 %>%  top_n(-2, temp)
+
+#subset mean dataset for depth =20cm 
+mean_100 <- subset(time_df, time_df$depth ==100)
+
+#top two high temperature values 
+max_100 <- mean_100 %>%  top_n(2, temp)
+#top two low temperature values 
+min_100 <- mean_100 %>%  top_n(-2, temp)
+
+
+#bind top and low 20% for all depths into dataframe
+max_min_df <- bind_rows(max_20, min_20,max_40, min_40,max_60, min_60, max_80, min_80, max_100, min_100)
+#max_min_df <- max_min_df[c(1,5:8)]
+print(max_min_df$id)
+```
+
+```{r}
+library("dplyr")
+Lyon_adj <- Lyon_final[c(1,4,6:8)]
+Lyon_adj_mean <- aggregate(.~Lyon_adj$id, data= Lyon_adj, mean)
+Lyon_adj_mean <- Lyon_adj_mean[c(2:6)]
+Lyon_adj_mean <- left_join(soil_char_PCA, Lyon_adj_mean, by = "id")
+Lyon_adj_mean <- Lyon_adj_mean[c(1:15,17:19)]
+Lyon_adj_mean$depth <- Lyon_adj_mean$depth.x
+Lyon_adj_mean$depth <- factor(Lyon_adj_mean$depth)
+```
+
+```{r}
+Lyon_deltatemp <- Lyon_final[c(1,6)]
+Lyon_deltatemp_mean <- aggregate(.~Lyon_deltatemp$id, data= Lyon_deltatemp, mean)
+Lyon_deltatemp_mean$Delta_temp <- Lyon_deltatemp_mean$temp - 22.06 #22.06 is the average ambient soil temp
+Lyon_adj_mean$Delta_temp  <- Lyon_deltatemp_mean$Delta_temp 
+```
+
+```{r}
+#plot delta co2 as a response of delta temp for top 20% and lower 20% of all temperatures
+###20cm deLta co2 and temp#####
+Lyon_max_20 <- subset(Lyon_final, subset = id %in% c(11, 46))
+Lyon_min_20 <- subset(Lyon_final, subset = id %in% c(6,31))
+
+Lyon_max_20$delta_co2<- Lyon_max_20$co2- Lyon_min_20$co2
+Lyon_max_20$delta_temp <- Lyon_max_20$temp- Lyon_min_20$temp
+
+
+###40cm deLta co2 and temp#####
+Lyon_max_40 <- subset(Lyon_final, subset = id %in% c(17, 22))
+Lyon_min_40 <- subset(Lyon_final, subset = id %in% c(2,47))
+
+Lyon_max_40$delta_co2<- Lyon_max_40$co2- Lyon_min_40$co2
+Lyon_max_40$delta_temp <- Lyon_max_40$temp - Lyon_min_40$temp
+
+
+###60cm deLta co2 and temp#####
+Lyon_max_60 <- subset(Lyon_final, subset = id %in% c(18, 33))
+Lyon_min_60 <- subset(Lyon_final, subset = id %in% c(8,28))
+
+Lyon_max_60$delta_co2<- Lyon_max_60$co2- Lyon_min_60$co2
+Lyon_max_60$delta_temp <- Lyon_max_60$temp - Lyon_min_60$temp
+
+###80cm deLta co2 and temp#####
+Lyon_max_80 <- subset(Lyon_final, subset = id %in% c(29, 49))
+Lyon_min_80 <- subset(Lyon_final, subset = id %in% c(9,24))
+
+Lyon_max_80$delta_co2<- Lyon_max_80$co2- Lyon_min_80$co2
+Lyon_max_80$delta_temp <- Lyon_max_80$temp - Lyon_min_80$temp
+
+
+###100cm deLta co2 and temp#####
+Lyon_max_100 <- subset(Lyon_final, subset = id %in% c(35, 40))
+Lyon_min_100 <- subset(Lyon_final, subset = id %in% c(15,30))
+
+Lyon_max_100$delta_co2<- Lyon_max_100$co2- Lyon_min_100$co2
+Lyon_max_100$delta_temp <- Lyon_max_100$temp - Lyon_min_100$temp
+
+```
+
+```{r}
+#install.packages("viridis")  # Install
+library("mgcViz")
+library("dplyr")
+library(RColorBrewer)
+library(colortools)
+
+#create dataframe of all depths delta temp and delta co2 
+DF_delta <- bind_rows(Lyon_max_80,Lyon_max_60,Lyon_max_40,Lyon_max_20, Lyon_max_100)
+#https://otexts.com/fpp2/regression.html
+DF_delta$depth <- factor(DF_delta$depth)
+#plot delta temp vs. delta co2 produced for all depths
+p <- ggplot(DF_delta, aes(x=delta_temp, y=delta_co2, col=depth)) +
+    geom_point(aes(shape=depth), size =2.2)+
+    scale_color_manual(
+                      name = "Depth (cm)",
+                      labels = c("20", "40", "60", "80", "100"),
+                     # values =  sequential("steelblue")) +   
+                     values = c("#F8766D", "#A3A500" ,"#00BF7D" ,"#00B0F6" ,"#E76BF3"))+
+    scale_shape_manual(name = "Depth (cm)",
+                     labels = c("20", "40", "60", "80", "100"),
+                     values = c(16,4,18,15,17))+
+    geom_hline(yintercept = 0, linetype = "solid", color = "black", size =1)+ #line at zero
+    geom_vline(xintercept = 4, linetype = "dashed", color = "red", size =1)+ #line at 4 degrees
+      
+    labs(
+      x = expression(Delta ~ "Soil temperature (?C)"),
+      y = expression(Delta ~'CO'[2 ]~ 'produced ('~ g~ m^-3 ~ hr^-1~')'))
+     # title = expression('Delta CO'[2]~'Produced vs. Delta seasonally adjusted temperature over time'),
+      #subtitle = "Highest and lowest 20% of temperature ranges at all depths")
+p + theme_minimal(base_size = 14)
+
+```
+
+
+```{r}
+Lyon_adj_mean$non_crystal <- Lyon_adj_mean$non_crystal
+Lyon_adj_mean$Fe_h_Fe_d <- Lyon_adj_mean$Fe_oxides
+Lyon_adj_mean$Al_p <- Lyon_adj_mean$OM_complexed_Al
+Lyon_adj_mean$Fe_p <- Lyon_adj_mean$OM_complexed_Fe
+```
+
+```{r}
+#https://www.marktechpost.com/2019/04/30/principal-component-analysis-pca-using-r/
+df <- Lyon_adj_mean[,c(2:10,12,14,17,18,20)]
+
+# 1. Correlation matrix
+df.scaled <- scale(df, center = TRUE, scale = TRUE)
+res.cor <- cor(df.scaled)
+round(res.cor, 2)
+
+# 2. Calculate eigenvectors/eigenvalues
+res.eig <- eigen(res.cor)
+res.eig
+
+# Transpose eigeinvectors
+eigenvectors.t <- t(res.eig$vectors)
+# Transpose the adjusted data
+df.scaled.t <- t(df.scaled)
+# The new dataset
+df.new <- eigenvectors.t %*% df.scaled.t
+# Transpose new data ad rename columns
+df.new <- t(df.new)
+colnames(df.new) <- c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "PC11", "PC12","PC13", "PC14" )
+head(df.new)
+```
+
+```{r}
+options(digits=3) #just so we don't get so many digits in our results
+dat <- Lyon_adj_mean[,c(2:10,12,14,17,18,20)]
+p<-ncol(dat)#no of variables
+R<-cor(dat)#saving the correlation matrix
+
+e<-eigen(R) #solving for the eigenvalues and eigenvectors from the correlation matrix
+
+L<-e$values #placing the eigenvalues in L
+Vm<-matrix(0,nrow=p,ncol=p) #creating a p x p matrix with zeroes.
+#Vm is an orthogonal matrix since all correlations between variable are 0.
+diag(Vm)<-L #putting the eigenvalues in the diagonals
+
+comp.matrix<-e$vectors %*% sqrt(Vm) #sometimes referred to as P matrix
+#or eigenvectors x sqrt(Vm): P %*% t(P) is equal to the R matrix.
+comp.matrix
+
+library(psych)
+pca<-principal(dat,nfactor=p,rotate="none") #forcing to extract p=6 components
+pca
+
+loadings<-e$vectors %*% sqrt(Vm) #these are the correlations as we have shown earlier
+loadings #signs are just different
+
+L/p
+```
+
+
+```{r}
+library(factoextra)
+library(RColorBrewer)
+res.pca <- prcomp(df, scale = TRUE, center = TRUE)
+#fviz_pca_ind(res.pca,
+             # col.ind = "cos2", # Color by the quality of representation
+             # gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             # repel = TRUE     # Avoid text overlapping
+             # )
+
+p <- fviz_pca_biplot(res.pca, repel = TRUE,
+
+
+                habillage = Lyon_adj_mean$depth,  # Individuals color
+                label = "var", 
+                addEllipses=TRUE,
+                #invisible = "var",
+                #palette = "Dark2",
+                #pointsize = 2,                                              
+            
+col.var = "grey45", # Variables color 
+               ggtheme = theme_minimal(base_size = 18), title = "")
+
+p          
+
+```
+
+```{r}
+library(mgcv)
+library(mgcViz)
+
+Lyon_adj_mean$depth <- as.numeric(as.character(Lyon_adj_mean$depth))
+
+#model without allophane ratio (better fit)
+M_Global = gam(log(co2) ~ s(vwc,k=4) + s(Delta_temp, k=4) + s(C, k=4) + s(N, k=4) + s(pH_H2O, k =4)+ s(Delta_pH, k=4) + s(non_crystal, k =4) + s(Fe_h_Fe_d,k=4) + s(Al_p, k=4) + s(Fe_p, k=4) + s(S_16S,k=4) + s(S_ITS, k=4) + s(depth, k =4)+ s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+#with allophane ratio
+M_Global_2 = gam(log(co2) ~ s(vwc,k=4) + s(Delta_temp, k=4) + s(C, k=4) + s(N, k=4) + s(pH_H2O, k =4)+ s(Delta_pH, k=4) + s(non_crystal, k =4) + s(Fe_h_Fe_d,k=4) + s(Al_p_Al_h, k =4)+ s(Al_p, k=4) + s(Fe_p, k=4) + s(S_16S,k=4) + s(S_ITS, k=4) + s(depth, k =4)+ s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+#with depth as a factor not continuous 
+Lyon_adj_mean$depth <- factor(Lyon_adj_mean$depth)
+M_Global_3 = gam(log(co2) ~ s(vwc,k=4) + s(Delta_temp, k=4) + s(C, k=4) + s(N, k=4) + s(pH_H2O, k =4)+ s(Delta_pH, k=4) + s(non_crystal, k =4) + s(Fe_h_Fe_d,k=4) + s(Al_p_Al_h, k =4)+ s(Al_p, k=4) + s(Fe_p, k=4) + s(S_16S,k=4) + s(S_ITS, k=4) + depth + s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+
+summary(M_Global_3)
+layout(matrix(1:4,ncol=2,byrow = T))
+gam.check(M_Global_3)
+b <- getViz(M_Global_3)
+
+check(b,
+     a.qq = list(method = "tnorm", 
+     a.cipoly = list(fill = "light blue")), 
+     a.respoi = list(size = 0.5), 
+     a.hist = list(bins = 10))
+
+print(plot(b, allTerms = T), pages = 1)
+
+AIC(M_Global, M_Global_2, M_Global_3)
+```
+
+```{r}
+library(MuMIn)
+dd <- dredge(M_Global)
+d <-subset(dd, delta < 4)
+
+# Visualize the model selection table:
+par(mar = c(3,5,6,4))
+plot(d, labAsExpr = TRUE)
+
+# Model average models with delta AICc < 4
+model.avg(dd, subset = delta < 4)
+
+#'Best' model
+summary(get.models(dd, 1)[[1]])
+
+#2nd 'Best' model
+summary(get.models(dd, 2)[[1]])
+```
+
+```{r}
+Lyon_adj_mean$depth <- factor(Lyon_adj_mean$depth)
+library(mgcv)
+library(mgcViz)
+library(MuMIn)
+#model with all data from mean adjusted timeseries
+
+D1 =  gam(log(co2) ~s(Delta_temp, k=3, by =depth)  + s(N, k =3, by =depth)+ s(Delta_pH, k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+D2= gam(log(co2) ~ s(vwc,k=3, by =depth) + s(Delta_temp, k=3, by =depth) + s(N, k=3, by = depth) + s(Delta_pH, k=3, by = depth) + s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+D3= gam(log(co2) ~ s(vwc,k=3, by =depth) + s(Delta_temp, k=3, by = depth) + s(C, k=3, by = depth) +  s(Delta_pH, k=3, by =depth) + s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML") 
+
+D4 = gam(log(co2) ~  s(Delta_temp, k=3, by = depth) + s(C, k=3, by = depth) + s(N, k=3, by = depth) + s(Delta_pH, k=3, by = depth) + s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+D5 = gam(log(co2) ~  s(Delta_temp, k=3, by =depth)+ s(N, k=3, by = depth) + s(Delta_pH, k=3, by =depth)  +s(Fe_h_Fe_d,k=3, by =depth) + s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+D6 = gam(log(co2) ~ s(Delta_temp, k=3, by =depth) +  s(N, k=3, by =depth) + s(vwc, k=3, by =depth) + s(pH_H2O, k=3, by = depth) + s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+D7 = gam(log(co2) ~  s(Delta_temp, k=3, by =depth)  + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(N,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+D8 = gam(log(co2) ~  s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) +s(vwc,k=3, by =depth) +s(pH_H2O,k=3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+D9 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth)  +s(Fe_p,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+D10 = gam(log(co2) ~ s(Delta_temp, k=3, by = depth) + s(N, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(S_ITS,k=3, by =depth) + s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+#D11 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(N,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+#D12 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(vwc_ad,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+#D13 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+
+#D14 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(OM_complexed, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+#D15 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_oxides, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+#D16 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_oxides, k =3, by =depth) + s(N, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+ AICc(D1,D2,D3, D4, D5,D6, D7, D8, D9, D10)        
+        
+#summary(M5)
+#b5 <- getViz(M5)
+
+#https://www.qualtrics.com/support/stats-iq/analyses/regression-guides/interpreting-residual-plots-improve-regression/
+#check(b5,
+      # a.qq = list(method = "tnorm",
+      #             a.cipoly = list(fill = "light blue")),
+      # a.respoi = list(size = 0.5),
+      # a.hist = list(bins = 10))
+``` 
+
+```{r}
+Lyon_adj_mean$depth <- factor(Lyon_adj_mean$depth)
+library(mgcv)
+library(mgcViz)
+library(MuMIn) 
+O1 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(N,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O2 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(C,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O3 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(vwc,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O4 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(pH_H2O,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O5 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O6 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_h_Fe_d, k =3, by =depth) + s(N, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O7 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_h_Fe_d, k =3, by =depth) +s(C,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O8 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_h_Fe_d, k =3, by =depth) + s(vwc, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O9 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_h_Fe_d, k =3, by =depth) + s(pH_H2O, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O10 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_h_Fe_d, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O11 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_p, k =3, by =depth) + s(N, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O12 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_p, k =3, by =depth) + s(C, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O13 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_p, k =3, by =depth) + s(vwc, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O14 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_p, k =3, by =depth) + s(pH_H2O, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O15 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_p, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O16 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(N, k =3, by =depth)+ s(vwc, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O17 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(N, k =3, by =depth)+ s(C, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O18 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(N, k =3, by =depth)+ s(pH_H2O, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O19 = gam(log(co2) ~s(Delta_temp, k=3, by =depth)  + s(N, k =3, by =depth)+ s(Delta_pH, k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O20 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(C, k =3, by =depth)+ s(vwc, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O21 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(C, k =3, by =depth)+ s(pH_H2O, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O22 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(C, k =3, by =depth)+  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O23 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(vwc, k =3, by =depth)+ s(pH_H2O, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O24 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(vwc, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O25 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(pH_H2O, k =3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O26 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(Fe_h_Fe_d,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O27 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(non_crystal, k =3, by =depth) +s(Fe_p,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O28 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) + s(Fe_p, k =3, by =depth) +s(Fe_h_Fe_d,k=3, by =depth) +  s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+O29 = gam(log(co2) ~s(Delta_temp, k=3, by =depth) + s(Delta_pH, k=3, by =depth) +   s(id, bs = "re")+ 1, data = Lyon_adj_mean, na.action = "na.fail", method ="REML")
+
+AICc(O1,O2,O3,O4,O5,O6,O7,O8,O9,O10, O11, O12, O13,O14,O15,O16,O17,O18,O19,O20, O21, O22,O23,O24,O25, O26,O27,O28, O29)
+
+```
