@@ -1,0 +1,151 @@
+---
+title: "GW_Flux_Density_switched"
+author: "Casey McGrath"
+date: "November 7, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(xts)
+library(graphics)
+library(dygraphs)
+library(lubridate)
+library(magrittr)
+
+gr <- (1+sqrt(5))/2 # golden ratio, for figures
+# The following chunk options can be overridden in chunk headers
+require("knitr")
+require("xtable")
+opts_chunk$set( # a function in the knitr package
+  echo = TRUE,  # show code chunks
+  fig.asp=1/gr, # <---- set default figure aspect ratio
+  fig.align="center")
+```
+
+**Calculating Gas Well Flux Density for Lyon Deep Soil Warming Project**
+
+To calculate the gas well flux density for the gas wells across the hillslope the following calculations are used:
+
+The first step is to calculate the molar density in $umol/m^3$ by using the molar density and volumetric water content (VWC). This can be done using the ideal gas law:
+
+$$
+PV= nRT
+$$
+Where $P$ is pressure (atm) , $V$ is volume (mL), $n$ is the moles of CO2, $R$ is the known gas constant ($J/mol$) and $T$ is the temperature (K). Here we import the datasets for temperature ($T$) and the Pressure ($P$) and the gas constant ($R$) are constants and moles of C02/ volume  is the variable in question: 
+
+```{r loading and molar_density, echo=FALSE}
+
+#set working directory
+setwd("C:\\Users\\14014\\Desktop\\UH_Soil_Warming\\Gas_wells\\R_input")
+#constants GWdata$airmd
+P <- 0.9725935829 *101.325#pressure from local weather station
+R <- 8.314 #gas constant (J/mol/K)
+
+#bring in CO2 data and assign headers
+GWdata <-read.csv(file="GW_2019_10_18.csv", skip=1, header=FALSE, stringsAsFactors = F) 
+names(GWdata)<-c("location", "depth", "well1", "well2", "well3", "Temp", "VWC", "Bd")
+
+#bring in temp and VWC data and assign headers
+
+
+
+GWdata$airmd <- P*1000/(R*(GWdata$Temp+273.15)) # find the molar density of air at the time of sampling for each temp
+
+GWdata$CO2mdx1 <- GWdata$airmd*(GWdata$well1/1000000) #molar density of well 1 shallow 
+
+GWdata$CO2mdx2 <- GWdata$airmd*(GWdata$well2/1000000) #molar density of well 2 middle 
+
+GWdata$CO2mdx3 <- GWdata$airmd*(GWdata$well3/1000000) #molar denstiy of well 3 deep
+```
+
+Next we take the derivative of the CO2 molar density vs. depth for dc/dz (C2-C1/Z2-Z1)
+
+```{r derivative}
+n <- length(GWdata$CO2mdx1)
+
+#shallow to middle gas well derivative for loop 
+GWdata$deriv1 <- numeric(n)
+for (i in 1:n){
+    if (GWdata$CO2mdx2[i] > GWdata$CO2mdx1[i]){
+      GWdata$deriv1[i] <- (GWdata$CO2mdx2[i] - GWdata$CO2mdx1[i])/0.2 
+    }else { 
+      GWdata$deriv1[i] <- (GWdata$CO2mdx1[i]-GWdata$CO2mdx2[i])/0.2 
+    }
+}
+
+#middle to deep gas well derivative for loop
+GWdata$deriv2 <- numeric(n)
+for (i in 1:n){
+    if (GWdata$CO2mdx3[i] > GWdata$CO2mdx2[i]){
+      GWdata$deriv2[i] <- (GWdata$CO2mdx3[i] - GWdata$CO2mdx2[i])/0.2 
+    }else { 
+      GWdata$deriv2[i] <- (GWdata$CO2mdx2[i]-GWdata$CO2mdx3[i])/0.2 
+    }
+}
+
+
+```
+
+Then we find the diffusion coefficents for each depth section from bulk density (Bd), water content (VWC) and temperature (Temp). 
+
+```{r coefficents}
+####constants####
+
+#diffusion coefficent of air (mn^2/s^-1)
+Doa <- 15.7 #not converted to m for later umol cancellation 
+
+#particle denstiy 
+Pd <- 2.65
+
+####coefficent calculations #### 
+
+#total porosity = 1 - (Bulk density/Particle density) * VWC 
+GWdata$Tp<- (1-(GWdata$Bd/Pd))- GWdata$VWC 
+
+#tourtisity = 0.95 * Total porosity ^ 1.95 
+GWdata$epsilon <- 0.95*(GWdata$Tp^1.95)
+
+#diffusion coefficent Do
+GWdata$Do <- Doa * ((GWdata$Temp+273.15)/293.15)^1.75 * (101.3/P)
+
+# #diffusion coefficent D
+GWdata$D <- GWdata$Do * GWdata$epsilon 
+```
+
+Now we get the flux production per depth section 
+
+```{r Flux}
+#flux density from middle layer to upper layer umol/m^2/s^1
+GWdata$F1 <- -GWdata$deriv1 * GWdata$D 
+
+#flux density from bottom layer to middle layer 
+GWdata$F2 <- -GWdata$deriv2 * GWdata$D
+
+#flux for depth section for loop umol/m^3/hr^-1
+GWdata$fluxprod <- numeric(n)
+for (i in 1:n){
+    if (GWdata$F2[i] > GWdata$F1[i]){
+      GWdata$fluxprod[i] <- (GWdata$F2[i] - GWdata$F1[i])/0.2 *3600
+    }else { 
+      GWdata$fluxprod[i] <- (GWdata$F1[i]-GWdata$F2[i])/0.2 *3600
+    }
+}
+
+#crude plot showing flux density across depth (** note: different locaitons for each gas well)
+plot(GWdata$depth, GWdata$fluxprod, 
+     xlab = 'depth (cm)',
+     ylim = c(0,100000),
+     ylab = expression('CO'[2 ]~ 'produced'~ mu ~ mol~ m^-3 ~ hr^-1),
+     col = "blue", 
+     pch = 19)
+
+```
+
+
+```{r}
+library(xlsx)
+library(rJava)
+write.xlsx(GWdata, "C:\\Users\\14014\\Desktop\\UH_Soil_Warming\\Gas_wells\\R_output\\2019_10_18_data.xlsx")
+```
+
+
